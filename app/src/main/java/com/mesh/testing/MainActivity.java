@@ -13,13 +13,18 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pDeviceList;
+import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.View;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
@@ -28,6 +33,7 @@ import android.widget.TextView;
 import android.net.wifi.WifiManager;
 import android.widget.Toast;
 
+import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -51,6 +57,9 @@ public class MainActivity extends AppCompatActivity {
     String[] deviceNameArray;
     WifiP2pDevice[] deviceArray;
 
+    private ConnectivityManager mCManager;
+    private ConnectivityManager.NetworkCallback mCallback;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -63,9 +72,16 @@ public class MainActivity extends AppCompatActivity {
         btnOnOff.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                System.out.println(Build.VERSION.SDK_INT);
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    Intent panelIntent = new Intent(Settings.Panel.ACTION_INTERNET_CONNECTIVITY);
+                    Intent panelIntent = new Intent(Settings.Panel.ACTION_WIFI);
                     startActivityForResult(panelIntent, 545);
+                }else {
+                    if (wifiManager.isWifiEnabled() == true) {
+                        wifiManager.setWifiEnabled(false);
+                    } else if (wifiManager.isWifiEnabled() == false) {
+                        wifiManager.setWifiEnabled(true);
+                    }
                 }
                 if (wifiManager.isWifiEnabled()) {
                     btnOnOff.setText("ON WIFI");
@@ -80,7 +96,7 @@ public class MainActivity extends AppCompatActivity {
             public void onClick(View v) {
                 if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
                     Toast.makeText(MainActivity.this, "Permission Granted", Toast.LENGTH_SHORT).show();
-                }else{
+                } else {
                     requestPermissions();
                 }
                 mManager.discoverPeers(mChannel, new WifiP2pManager.ActionListener() {
@@ -91,9 +107,38 @@ public class MainActivity extends AppCompatActivity {
 
                     @Override
                     public void onFailure(int reason) {
-                        connectionStatus.setText("Discovey Starting Failed");
+                        connectionStatus.setText("Discovery Starting Failed");
                     }
                 });
+            }
+        });
+
+        listView.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                final WifiP2pDevice device = deviceArray[position];
+                WifiP2pConfig config = new WifiP2pConfig();
+                config.deviceAddress = device.deviceAddress;
+
+                if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions();
+                }else {
+                    System.out.println("Access Fine Location Permitted!");
+                }
+                mManager.connect(mChannel, config, new WifiP2pManager.ActionListener() {
+                    @Override
+                    public void onSuccess() {
+                        Toast.makeText(getApplicationContext(), "Connected to"+device.deviceName, Toast.LENGTH_SHORT).show();
+
+                    }
+
+                    @Override
+                    public void onFailure(int reason) {
+                        Toast.makeText(getApplicationContext(), "Not Connected", Toast.LENGTH_SHORT).show();
+                    }
+                });
+
+
             }
         });
     }
@@ -111,7 +156,7 @@ public class MainActivity extends AppCompatActivity {
         mManager = (WifiP2pManager) getSystemService(Context.WIFI_P2P_SERVICE);
         mChannel = mManager.initialize(this, getMainLooper(), null);
 
-        mReciever = new WiFiDirectBroadcastReciever(mManager, mChannel, this);
+        mReciever = new WiFiDirectBroadcastReciever(mManager, mChannel, this, mCManager, mCallback);
 
         mIntentFilter = new IntentFilter();
         mIntentFilter.addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION);
@@ -119,7 +164,7 @@ public class MainActivity extends AppCompatActivity {
         mIntentFilter.addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION);
         mIntentFilter.addAction(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION);
 
-
+        mCManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
 
         if(wifiManager.isWifiEnabled()){
             btnOnOff.setText("OFF WIFI");
@@ -131,6 +176,7 @@ public class MainActivity extends AppCompatActivity {
     WifiP2pManager.PeerListListener peerListListener = new WifiP2pManager.PeerListListener() {
         @Override
         public void onPeersAvailable(WifiP2pDeviceList peerList) {
+            System.out.println("Peer List has Changed!");
             if(!peerList.getDeviceList().equals(peers)){
                 peers.clear();
                 peers.addAll(peerList.getDeviceList());
@@ -145,12 +191,28 @@ public class MainActivity extends AppCompatActivity {
                     index++;
                 }
 
-                ArrayAdapter<String> adapter = new ArrayAdapter<String>(getApplicationContext(), android.R.layout.simple_list_item_1);
+                ArrayAdapter<String> adapter = new ArrayAdapter<>(getApplicationContext(), android.R.layout.simple_list_item_1, deviceNameArray);
                 listView.setAdapter(adapter);
+
+
+                System.out.println(deviceNameArray);
                 if(peers.size() == 0){
                     Toast.makeText(getApplicationContext(),"No Device Found", Toast.LENGTH_SHORT).show();
                     return;
                 }
+            }
+        }
+    };
+
+    WifiP2pManager.ConnectionInfoListener connectionInfoListener = new WifiP2pManager.ConnectionInfoListener() {
+        @Override
+        public void onConnectionInfoAvailable(WifiP2pInfo info) {
+            final InetAddress groupOwnerAddress = info.groupOwnerAddress;
+
+            if (info.groupFormed && info.isGroupOwner) {
+                connectionStatus.setText("Host");
+            } else if (info.groupFormed) {
+                connectionStatus.setText("Client");
             }
         }
     };
@@ -167,7 +229,7 @@ public class MainActivity extends AppCompatActivity {
         unregisterReceiver(mReciever);
     }
 
-    private void requestPermissions() {
+    public void requestPermissions() {
         if(ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.ACCESS_FINE_LOCATION)){
             new AlertDialog.Builder(this)
                     .setTitle("Permission Needed")
