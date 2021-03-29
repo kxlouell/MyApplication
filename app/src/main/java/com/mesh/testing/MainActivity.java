@@ -22,6 +22,8 @@ import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
 import android.provider.Settings;
 import android.view.View;
 import android.widget.AdapterView;
@@ -33,7 +35,13 @@ import android.widget.TextView;
 import android.net.wifi.WifiManager;
 import android.widget.Toast;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -57,6 +65,13 @@ public class MainActivity extends AppCompatActivity {
     String[] deviceNameArray;
     WifiP2pDevice[] deviceArray;
 
+    static final int MESSAGE_READ = 1;
+
+    SeverClass serverClass;
+    ClientClass clientClass;
+    SendRecieve sendRecieve;
+
+
     private ConnectivityManager mCManager;
     private ConnectivityManager.NetworkCallback mCallback;
 
@@ -67,6 +82,20 @@ public class MainActivity extends AppCompatActivity {
         initialWork();
         exqListener();
     }
+
+    Handler handler = new Handler(new Handler.Callback() {
+        @Override
+        public boolean handleMessage(@NonNull Message msg) {
+            switch (msg.what){
+                case MESSAGE_READ:
+                    byte[] readBuff = (byte[]) msg.obj;
+                    String tempMag = new String(readBuff, 0, msg.arg1);
+                    read_msg_box.setText(tempMag);
+                    break;
+            }
+            return true;
+        }
+    });
 
     private void exqListener() {
         btnOnOff.setOnClickListener(new View.OnClickListener() {
@@ -102,12 +131,17 @@ public class MainActivity extends AppCompatActivity {
                 mManager.discoverPeers(mChannel, new WifiP2pManager.ActionListener() {
                     @Override
                     public void onSuccess() {
-                        connectionStatus.setText("Discovey Started");
+                        connectionStatus.setText("Discovery Started");
                     }
 
                     @Override
                     public void onFailure(int reason) {
+                        String failReason = "Unknown";
+                        if(reason == 0) failReason = "Internal Error";
+                        if(reason == 1) failReason = "P2P Unsupported";
+                        if(reason == 2) failReason = "WiFi Direct Busy";
                         connectionStatus.setText("Discovery Starting Failed");
+                        Toast.makeText(MainActivity.this, "Error: "+failReason, Toast.LENGTH_SHORT).show();
                     }
                 });
             }
@@ -138,6 +172,20 @@ public class MainActivity extends AppCompatActivity {
                     }
                 });
 
+
+            }
+        });
+
+        btnSend.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                String msg = writeMsg.getText().toString();
+                try{
+                    sendRecieve.write(msg.getBytes());
+                }catch (Exception e){
+                    System.out.println(e);
+                    System.out.println(msg.getBytes());
+                }
 
             }
         });
@@ -211,8 +259,12 @@ public class MainActivity extends AppCompatActivity {
 
             if (info.groupFormed && info.isGroupOwner) {
                 connectionStatus.setText("Host");
+                serverClass = new SeverClass();
+                serverClass.start();
             } else if (info.groupFormed) {
                 connectionStatus.setText("Client");
+                clientClass = new ClientClass(groupOwnerAddress);
+                clientClass.start();
             }
         }
     };
@@ -228,6 +280,87 @@ public class MainActivity extends AppCompatActivity {
         super.onPause();
         unregisterReceiver(mReciever);
     }
+
+    public class SeverClass extends Thread{
+        Socket socket;
+        ServerSocket serverSocket;
+
+        @Override
+        public void run() {
+            try {
+                serverSocket = new ServerSocket(8888);
+                socket = serverSocket.accept();
+                sendRecieve = new SendRecieve(socket);
+                sendRecieve.start();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+        }
+    }
+
+    private class SendRecieve extends Thread{
+        private Socket socket;
+        private InputStream inputStream;
+        private OutputStream outputStream;
+
+        public SendRecieve(Socket skt){
+            socket = skt;
+            try {
+                inputStream = socket.getInputStream();
+                outputStream = socket.getOutputStream();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+
+        @Override
+        public void run() {
+            byte[] buffer = new byte[1024];
+            int bytes;
+
+            while(socket!=null){
+                try {
+                    bytes = inputStream.read(buffer);
+                    if (bytes>0){
+                        handler.obtainMessage(MESSAGE_READ, bytes, -1,buffer).sendToTarget();
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+
+        public void write(byte[] bytes){
+            try {
+                outputStream.write(bytes);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public class ClientClass extends Thread{
+        Socket socket;
+        String hostAdd;
+
+        public ClientClass(InetAddress hostAddress){
+            hostAdd = hostAddress.getHostAddress();
+            socket = new Socket();
+        }
+
+        @Override
+        public void run() {
+            try {
+                socket.connect(new InetSocketAddress(hostAdd, 8888), 500);
+                sendRecieve = new SendRecieve(socket);
+                sendRecieve.start();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
 
     public void requestPermissions() {
         if(ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.ACCESS_FINE_LOCATION)){

@@ -68,15 +68,28 @@ public class WiFiDirectBroadcastReciever extends BroadcastReceiver {
                 mCallback = new ConnectivityManager.NetworkCallback(){
                     @Override
                     public void onLost(@NonNull Network network) {
-                        Toast.makeText(context, "Not Connected!", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(context, "Connection Lost", Toast.LENGTH_SHORT).show();
+                        mActivity.connectionStatus.setText("Device Disconnected");
                     }
 
                     @Override
                     public void onAvailable(@NonNull Network network) {
                         Toast.makeText(context, "Connected!", Toast.LENGTH_SHORT).show();
+                        mManager.requestConnectionInfo(mChannel,mActivity.connectionInfoListener);
                     }
 
+                    @Override
+                    public void onUnavailable() {
+                        mActivity.connectionStatus.setText("Device Disconnected");
+                    }
                 };
+            }else {
+                NetworkInfo networkInfo = intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO);
+                if (networkInfo.isConnected()) {
+                    mManager.requestConnectionInfo(mChannel, mActivity.connectionInfoListener);
+                }else {
+                    mActivity.connectionStatus.setText("Device Disconnected");
+                }
             }
 
 
