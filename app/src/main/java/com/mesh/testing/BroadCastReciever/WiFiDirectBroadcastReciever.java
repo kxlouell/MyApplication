@@ -1,4 +1,4 @@
-package com.mesh.testing;
+package com.mesh.testing.BroadCastReciever;
 
 import android.Manifest;
 import android.content.BroadcastReceiver;
@@ -6,7 +6,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
+import android.net.LinkProperties;
 import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.NetworkInfo;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.p2p.WifiP2pManager;
@@ -15,6 +17,8 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.ActivityCompat;
+
+import com.mesh.testing.MainActivity;
 
 public class WiFiDirectBroadcastReciever extends BroadcastReceiver {
 
@@ -36,10 +40,9 @@ public class WiFiDirectBroadcastReciever extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         String action = intent.getAction();
-        System.out.println("Running onRecieve method");
+
         if (WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION.equals(action)) {
             int state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1);
-            System.out.println("Wifi p2p state changed");
             if (state == WifiP2pManager.WIFI_P2P_STATE_ENABLED) {
                 Toast.makeText(context, "Wifi is ON", Toast.LENGTH_SHORT).show();
             } else {
@@ -48,7 +51,7 @@ public class WiFiDirectBroadcastReciever extends BroadcastReceiver {
 
         } else if (WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION.equals(action)) {
             //do something
-            System.out.println("Wifi p2p peers changed");
+            Toast.makeText(context, "p2p peer changed action", Toast.LENGTH_SHORT).show();
             if (mManager != null) {
                 if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                     mActivity.requestPermissions();
@@ -61,40 +64,24 @@ public class WiFiDirectBroadcastReciever extends BroadcastReceiver {
             }
         }else if(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION.equals(action)){
             //do something
+            Toast.makeText(context, "Connection Changed Action", Toast.LENGTH_SHORT).show();
             if(mManager == null){
+                Toast.makeText(context, "mManager is null", Toast.LENGTH_SHORT).show();
                 return;
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                mCallback = new ConnectivityManager.NetworkCallback(){
-                    @Override
-                    public void onLost(@NonNull Network network) {
-                        Toast.makeText(context, "Connection Lost", Toast.LENGTH_SHORT).show();
-                        mActivity.connectionStatus.setText("Device Disconnected");
-                    }
-
-                    @Override
-                    public void onAvailable(@NonNull Network network) {
-                        Toast.makeText(context, "Connected!", Toast.LENGTH_SHORT).show();
-                        mManager.requestConnectionInfo(mChannel,mActivity.connectionInfoListener);
-                    }
-
-                    @Override
-                    public void onUnavailable() {
-                        mActivity.connectionStatus.setText("Device Disconnected");
-                    }
-                };
-            }else {
-                NetworkInfo networkInfo = intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO);
-                if (networkInfo.isConnected()) {
+            Toast.makeText(context, "mManager is  not null", Toast.LENGTH_SHORT).show();
+            NetworkInfo networkInfo = intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO);
+            if (networkInfo.isConnected()) {
                     mManager.requestConnectionInfo(mChannel, mActivity.connectionInfoListener);
-                }else {
+            }else {
                     mActivity.connectionStatus.setText("Device Disconnected");
-                }
             }
+
 
 
         }else if(WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION.equals(action)){
             //do something
+            Toast.makeText(context, "this device change action", Toast.LENGTH_SHORT).show();
         }
     }
 }

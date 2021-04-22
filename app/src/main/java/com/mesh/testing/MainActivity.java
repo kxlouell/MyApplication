@@ -14,17 +14,20 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
-import android.net.Network;
 import android.net.wifi.p2p.WifiP2pConfig;
 import android.net.wifi.p2p.WifiP2pDevice;
 import android.net.wifi.p2p.WifiP2pDeviceList;
+import android.net.wifi.p2p.WifiP2pGroup;
 import android.net.wifi.p2p.WifiP2pInfo;
 import android.net.wifi.p2p.WifiP2pManager;
+import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.provider.Settings;
+import android.util.Log;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
@@ -45,13 +48,17 @@ import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.mesh.testing.BroadCastReciever.WiFiDirectBroadcastReciever;
+import com.mesh.testing.AsyncTasks.SendRecieve;
+
 public class MainActivity extends AppCompatActivity {
 
     private int FINE_LOCATION_PERMISION_CODE = 1;
 
     Button btnOnOff, btnDiscover, btnSend;
     ListView listView;
-    TextView read_msg_box, connectionStatus;
+    TextView read_msg_box;
+    public TextView connectionStatus;
     EditText writeMsg;
 
     WifiManager wifiManager;
@@ -65,7 +72,7 @@ public class MainActivity extends AppCompatActivity {
     String[] deviceNameArray;
     WifiP2pDevice[] deviceArray;
 
-    static final int MESSAGE_READ = 1;
+    public static final int MESSAGE_READ = 1;
 
     SeverClass serverClass;
     ClientClass clientClass;
@@ -83,14 +90,17 @@ public class MainActivity extends AppCompatActivity {
         exqListener();
     }
 
+
+
+
     Handler handler = new Handler(new Handler.Callback() {
         @Override
         public boolean handleMessage(@NonNull Message msg) {
-            switch (msg.what){
+            switch (msg.what) {
                 case MESSAGE_READ:
                     byte[] readBuff = (byte[]) msg.obj;
-                    String tempMag = new String(readBuff, 0, msg.arg1);
-                    read_msg_box.setText(tempMag);
+                    String tempMsg = new String(readBuff, 0, msg.arg1);
+                    read_msg_box.setText(tempMsg);
                     break;
             }
             return true;
@@ -105,7 +115,7 @@ public class MainActivity extends AppCompatActivity {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     Intent panelIntent = new Intent(Settings.Panel.ACTION_WIFI);
                     startActivityForResult(panelIntent, 545);
-                }else {
+                } else {
                     if (wifiManager.isWifiEnabled() == true) {
                         wifiManager.setWifiEnabled(false);
                     } else if (wifiManager.isWifiEnabled() == false) {
@@ -123,27 +133,7 @@ public class MainActivity extends AppCompatActivity {
         btnDiscover.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                    Toast.makeText(MainActivity.this, "Permission Granted", Toast.LENGTH_SHORT).show();
-                } else {
-                    requestPermissions();
-                }
-                mManager.discoverPeers(mChannel, new WifiP2pManager.ActionListener() {
-                    @Override
-                    public void onSuccess() {
-                        connectionStatus.setText("Discovery Started");
-                    }
-
-                    @Override
-                    public void onFailure(int reason) {
-                        String failReason = "Unknown";
-                        if(reason == 0) failReason = "Internal Error";
-                        if(reason == 1) failReason = "P2P Unsupported";
-                        if(reason == 2) failReason = "WiFi Direct Busy";
-                        connectionStatus.setText("Discovery Starting Failed");
-                        Toast.makeText(MainActivity.this, "Error: "+failReason, Toast.LENGTH_SHORT).show();
-                    }
-                });
+                discoverPeer();
             }
         });
 
@@ -156,13 +146,13 @@ public class MainActivity extends AppCompatActivity {
 
                 if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                     requestPermissions();
-                }else {
+                } else {
                     System.out.println("Access Fine Location Permitted!");
                 }
                 mManager.connect(mChannel, config, new WifiP2pManager.ActionListener() {
                     @Override
                     public void onSuccess() {
-                        Toast.makeText(getApplicationContext(), "Connected to"+device.deviceName, Toast.LENGTH_SHORT).show();
+                        Toast.makeText(getApplicationContext(), "Connected to" + device.deviceName, Toast.LENGTH_SHORT).show();
 
                     }
 
@@ -179,14 +169,8 @@ public class MainActivity extends AppCompatActivity {
         btnSend.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                String msg = writeMsg.getText().toString();
-                try{
-                    sendRecieve.write(msg.getBytes());
-                }catch (Exception e){
-                    System.out.println(e);
-                    System.out.println(msg.getBytes());
-                }
-
+                syncTask stask = new syncTask();
+                stask.execute();
             }
         });
     }
@@ -214,18 +198,18 @@ public class MainActivity extends AppCompatActivity {
 
         mCManager = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
 
-        if(wifiManager.isWifiEnabled()){
+        if (wifiManager.isWifiEnabled()) {
             btnOnOff.setText("OFF WIFI");
-        }else {
+        } else {
             btnOnOff.setText("ON WIFI");
         }
     }
 
-    WifiP2pManager.PeerListListener peerListListener = new WifiP2pManager.PeerListListener() {
+    public WifiP2pManager.PeerListListener peerListListener = new WifiP2pManager.PeerListListener() {
         @Override
         public void onPeersAvailable(WifiP2pDeviceList peerList) {
             System.out.println("Peer List has Changed!");
-            if(!peerList.getDeviceList().equals(peers)){
+            if (!peerList.getDeviceList().equals(peers)) {
                 peers.clear();
                 peers.addAll(peerList.getDeviceList());
 
@@ -233,7 +217,7 @@ public class MainActivity extends AppCompatActivity {
                 deviceArray = new WifiP2pDevice[peerList.getDeviceList().size()];
                 int index = 0;
 
-                for(WifiP2pDevice device : peerList.getDeviceList()){
+                for (WifiP2pDevice device : peerList.getDeviceList()) {
                     deviceNameArray[index] = device.deviceName;
                     deviceArray[index] = device;
                     index++;
@@ -242,21 +226,19 @@ public class MainActivity extends AppCompatActivity {
                 ArrayAdapter<String> adapter = new ArrayAdapter<>(getApplicationContext(), android.R.layout.simple_list_item_1, deviceNameArray);
                 listView.setAdapter(adapter);
 
-
-                System.out.println(deviceNameArray);
-                if(peers.size() == 0){
-                    Toast.makeText(getApplicationContext(),"No Device Found", Toast.LENGTH_SHORT).show();
+                if (peers.size() == 0) {
+                    Toast.makeText(getApplicationContext(), "No Device Found", Toast.LENGTH_SHORT).show();
                     return;
                 }
             }
         }
     };
 
-    WifiP2pManager.ConnectionInfoListener connectionInfoListener = new WifiP2pManager.ConnectionInfoListener() {
+    public WifiP2pManager.ConnectionInfoListener connectionInfoListener = new WifiP2pManager.ConnectionInfoListener() {
         @Override
-        public void onConnectionInfoAvailable(WifiP2pInfo info) {
+        public void onConnectionInfoAvailable(final WifiP2pInfo info) {
             final InetAddress groupOwnerAddress = info.groupOwnerAddress;
-
+            Toast.makeText(MainActivity.this, "Group Formed!!", Toast.LENGTH_SHORT).show();
             if (info.groupFormed && info.isGroupOwner) {
                 connectionStatus.setText("Host");
                 serverClass = new SeverClass();
@@ -269,10 +251,35 @@ public class MainActivity extends AppCompatActivity {
         }
     };
 
+    public void discoverPeer(){
+        if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            Toast.makeText(MainActivity.this, "Permission Granted", Toast.LENGTH_SHORT).show();
+        } else {
+            requestPermissions();
+        }
+        mManager.discoverPeers(mChannel, new WifiP2pManager.ActionListener() {
+            @Override
+            public void onSuccess() {
+                connectionStatus.setText("Discovery Started");
+            }
+
+            @Override
+            public void onFailure(int reason) {
+                String failReason = "Unknown";
+                if (reason == 0) failReason = "Internal Error";
+                if (reason == 1) failReason = "P2P Unsupported";
+                if (reason == 2) failReason = "WiFi Direct Busy";
+                connectionStatus.setText("Discovery Starting Failed");
+                Toast.makeText(MainActivity.this, "Error: " + failReason, Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
     @Override
     protected void onResume() {
         super.onResume();
         registerReceiver(mReciever, mIntentFilter);
+
     }
 
     @Override
@@ -281,7 +288,13 @@ public class MainActivity extends AppCompatActivity {
         unregisterReceiver(mReciever);
     }
 
-    public class SeverClass extends Thread{
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        disconnect();
+    }
+
+    public class SeverClass extends Thread {
         Socket socket;
         ServerSocket serverSocket;
 
@@ -290,8 +303,9 @@ public class MainActivity extends AppCompatActivity {
             try {
                 serverSocket = new ServerSocket(8888);
                 socket = serverSocket.accept();
-                sendRecieve = new SendRecieve(socket);
+                sendRecieve = new SendRecieve(socket,MainActivity.this,handler);
                 sendRecieve.start();
+                System.out.println("ServerClass: " + Thread.currentThread());
             } catch (IOException e) {
                 e.printStackTrace();
             }
@@ -299,52 +313,13 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private class SendRecieve extends Thread{
-        private Socket socket;
-        private InputStream inputStream;
-        private OutputStream outputStream;
 
-        public SendRecieve(Socket skt){
-            socket = skt;
-            try {
-                inputStream = socket.getInputStream();
-                outputStream = socket.getOutputStream();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
 
-        @Override
-        public void run() {
-            byte[] buffer = new byte[1024];
-            int bytes;
-
-            while(socket!=null){
-                try {
-                    bytes = inputStream.read(buffer);
-                    if (bytes>0){
-                        handler.obtainMessage(MESSAGE_READ, bytes, -1,buffer).sendToTarget();
-                    }
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            }
-        }
-
-        public void write(byte[] bytes){
-            try {
-                outputStream.write(bytes);
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
-    public class ClientClass extends Thread{
+    public class ClientClass extends Thread {
         Socket socket;
         String hostAdd;
 
-        public ClientClass(InetAddress hostAddress){
+        public ClientClass(InetAddress hostAddress) {
             hostAdd = hostAddress.getHostAddress();
             socket = new Socket();
         }
@@ -353,15 +328,52 @@ public class MainActivity extends AppCompatActivity {
         public void run() {
             try {
                 socket.connect(new InetSocketAddress(hostAdd, 8888), 500);
-                sendRecieve = new SendRecieve(socket);
+                sendRecieve = new SendRecieve(socket,MainActivity.this,handler);
                 sendRecieve.start();
+
             } catch (IOException e) {
                 e.printStackTrace();
             }
         }
     }
 
+    public class syncTask extends AsyncTask<Void, Void, Void> {
+        String msg = writeMsg.getText().toString();
 
+        @Override
+        protected Void doInBackground(Void... voids) {
+            sendRecieve.write(msg.getBytes());
+            return null;
+        }
+    }
+
+    public void disconnect() {
+        if (mManager != null && mChannel != null) {
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions();
+                return;
+            }
+            mManager.requestGroupInfo(mChannel, new WifiP2pManager.GroupInfoListener() {
+                @Override
+                public void onGroupInfoAvailable(WifiP2pGroup group) {
+                    if (group != null && mManager != null && mChannel != null) {
+                        mManager.removeGroup(mChannel, new WifiP2pManager.ActionListener() {
+
+                            @Override
+                            public void onSuccess() {
+                                Toast.makeText(getApplicationContext(),"Group Disconnect Success!", Toast.LENGTH_LONG).show();
+                            }
+
+                            @Override
+                            public void onFailure(int reason) {
+                                Toast.makeText(getApplicationContext(),"Group Disconnected Failed!", Toast.LENGTH_LONG).show();
+                            }
+                        });
+                    }
+                }
+            });
+        }
+    }
     public void requestPermissions() {
         if(ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.ACCESS_FINE_LOCATION)){
             new AlertDialog.Builder(this)
@@ -395,4 +407,6 @@ public class MainActivity extends AppCompatActivity {
             Toast.makeText(this, "Permission Denied", Toast.LENGTH_SHORT).show();
         }
     }
+
+
 }
